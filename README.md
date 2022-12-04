@@ -27,4 +27,9 @@ All Accidents | Severe Accidents
 :------------:|:----------------:
 <img src="https://user-images.githubusercontent.com/114524578/205473036-3b9f3a15-03d3-4a02-a7a6-0d0a3e5d0ddd.png" width=400 height=300 /> | <img src="https://user-images.githubusercontent.com/114524578/205473047-98bdd346-3f01-4663-816d-797e66869e3b.png" width=400 height=300 />
 
+Here, we see that while words like "accident" and "road" are common words in both sets, words like "closed" and "blocked" appear more often in the severe car accidents than in all of the car accidents. So, we created dummy variables for these words in place of the description predictor. 
+
+#### Start_Time, End_Time, Weather_Timestamp
+
+
 
