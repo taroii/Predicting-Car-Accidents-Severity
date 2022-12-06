@@ -1,0 +1,546 @@
+---
+title: "final_project"
+output: html_document
+date: "2022-11-16"
+---
+
+# Car Accidents Project
+
+### Importing Data
+
+```{r}
+acc_train <- read.csv("Acctrain.csv", header=T, stringsAsFactors = T)
+acc_test_x <- read.csv("AcctestNoYNew.csv", header=T, stringsAsFactors = T)
+acc_test_x <- acc_test_x[, -1]
+acc_sample <- read.csv("AccSampleNew.csv", header=T)
+```
+
+------------------------------------------------------------------------
+
+### Organizing Training Data
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+#Converting Description into a categorical predictor.
+#Finding frequently used words in the descriptions of severe car accidents. 
+
+#acc_train[acc_train$Severity == "SEVERE", ]$Description
+
+#Commonly used words for severe accidents are closed, reduced, blocked.
+
+acc_train$Closure <- grepl("close", acc_train$Description, ignore.case=TRUE) |
+  grepl("reduce", acc_train$Description, ignore.case=TRUE) | 
+  grepl("block", acc_train$Description, ignore.case=TRUE)
+
+
+#######################################################################################
+
+#Create Month predictor, Year predictor, isWinter predictor, Hour predictor, Night predictor, and translate Time Predictors
+merged <- acc_train
+
+merged$Month <- substr(merged[, 3], start=6, stop=7)
+merged$Month <- as.numeric(merged$Month)
+
+merged$Year <- substr(merged[, 3], start=1, stop=4)
+merged$Year <- as.factor(merged$Year)
+
+merged$Hour <- substr(merged[,3], start=12, stop=13)
+merged$Hour <- as.numeric(merged$Hour)
+merged$Night <- ifelse(merged$Hour > 18 | merged$Hour < 7, "Night", "Day")
+
+stat_mode <- function(x) {
+  if(any(is.na(x))){
+    x[!is.na(x)]
+  }
+  else{
+    ux <- unique(x)
+    tab <- tabulate(match(x, ux))
+    ux[tab == max(tab)][1]
+  }
+}
+
+merged$Night <- as.factor(unlist(apply(merged[,c("Sunrise_Sunset", "Civil_Twilight", "Nautical_Twilight", "Astronomical_Twilight", "Night")], 1, stat_mode)))
+
+merged[,c(2, 3, 19)] <- apply(merged[, c(2, 3, 19)], 2, as.character)
+merged[,c(2, 3, 19)] <- apply(merged[, c(2, 3, 19)], 2, as.POSIXct, format="%Y-%m-%dT%H:%M:%SZ")
+
+#######################################################################################
+
+#Cleaning Wind_Direction
+
+x <- as.character(merged$Wind_Direction)
+x[x == "CALM"] <- "Calm"
+x[x=="East"] <- "E"
+x[x=="North"] <- "N"
+x[x=="South"] <- "S"
+x[x=="West"] <- "W"
+x[x=="Variable"] <- "VAR"
+merged$Wind_Direction <- as.factor(x)
+
+#######################################################################################
+
+#Create Highway Predictor
+#(Whether or not the accident occurred on a highway)
+
+merged$Highway <- grepl("Hwy", merged$Street, ignore.case=TRUE) | grepl("Highway", merged$Street, ignore.case=TRUE) |grepl("I-", merged$Street, ignore.case=TRUE)
+
+
+#######################################################################################
+
+#Create Time_Lapsed Predictor
+
+merged$Time_Lapsed <- merged$End_Time - merged$Start_Time
+
+
+#Create Distance_Traveled Predictor
+
+merged <- merged %>% mutate("Distance_Traveled" = sqrt((End_Lat - Start_Lat)^2 + (End_Lng - Start_Lng)^2))
+
+#######################################################################################
+
+#Simplify Zipcode
+
+merged$Zipcode <- as.factor(sapply(merged$Zipcode, substr, start=1, stop=5))
+
+#Organize zipcodes into 9 regional categories (Region_Code)
+
+region <- data.frame("Region_Code" = 0:9, "Region" = as.factor(c('New England', 'Mid-Atlantic', 'Central East Coast', 'South', 'Midwest', 'Northern Great Plains', 'Central Great Plains', 'South Central', 'Mountain Desert', 'West Coast')))
+
+merged <- merged %>% mutate("Region_Code" = as.factor(substr(Zipcode, 1, 1)))
+
+#merged <- merge(merged, region, all.x=T, all.y=F, by.x="Region_Code", by.y="Region_Code")
+
+merged$Region_Code <- as.factor(merged$Region_Code)
+
+#######################################################################################
+
+#Create isCalm and isClear Predictors
+#isCalm is a variable that indicates whether the Wind_Direction variable is "Calm". 
+#isClear is a variable that indicates whether the Weather_Condition variable is "Clear". 
+
+merged$isCalm <- merged$Wind_Direction == "CALM"
+merged$isCalm[is.na(merged$isCalm)] <- FALSE
+
+merged$isClear <- merged$Weather_Condition == "Clear"
+merged$isClear[is.na(merged$isClear)] <- FALSE
+
+#######################################################################################
+
+#Remove redundant variables
+#These variables are the variables the predictors we've just created are based on. 
+#These variable are County, Start_Time, End_Time, Start_Lat, End_Lat, Start_Lng, End_Lng, Description, Street, City, State, Zipcode, Country, Airport_Code, Wind_Direction, Weather_Condition, Sunrise_Sunset, Civil_Twilight, Nautical_Twilight, Astronomical_Twilight
+
+names(merged)
+
+#non_redundant <- merged[, -c(2, 4, 5, 6, 7, 8, 9, 11, 12, 14, 15, 16, 17, 18, 19, 26, 28, 56)]
+#non_redundant <- merged[, -c(3, 4, 5, 6, 7, 8, 10, 11, 13, 14, 15, 16, 17, 18, 19, 26, 28, 42, 43, 44, 45)]
+non_redundant <- merged[, -c(2, 3, 4, 5, 6, 7, 9, 10, 12, 13, 14, 15, 16, 17, 18, 25, 27, 41, 42, 43, 44)]
+
+#Export files
+write.csv(merged, "all_predictors.csv", row.names=F)
+write.csv(non_redundant, "non_redundant.csv", row.names=F)
+
+#View new data frames
+str(non_redundant)
+```
+
+#### Organizing Testing Data
+
+```{r}
+#Converting Description into a categorical predictor.
+#Finding frequently used words in the descriptions of severe car accidents. 
+
+#acc_train[acc_train$Severity == "SEVERE", ]$Description
+
+#Commonly used words for severe accidents are closed, reduced, blocked.
+
+acc_test_x$Closure <- grepl("close", acc_test_x$Description, ignore.case=TRUE) |
+  grepl("reduce", acc_test_x$Description, ignore.case=TRUE) | 
+  grepl("block", acc_test_x$Description, ignore.case=TRUE)
+
+#######################################################################################
+
+#Create Month predictor, Year predictor, isWinter predictor, Hour predictor, Night predictor, and translate Time Predictors
+
+acc_test_x$Month <- substr(acc_test_x[, 1], start=6, stop=7)
+acc_test_x$Month <- as.numeric(acc_test_x$Month)
+
+acc_test_x$Year <- substr(acc_test_x[, 1], start=1, stop=4)
+acc_test_x$Year <- as.factor(acc_test_x$Year)
+
+acc_test_x$Hour <- substr(acc_test_x[,1], start=12, stop=13)
+acc_test_x$Hour <- as.numeric(acc_test_x$Hour)
+acc_test_x$Night <- ifelse(acc_test_x$Hour > 18 | acc_test_x$Hour < 7, "Night", "Day")
+
+stat_mode <- function(x) {
+  if(any(is.na(x))){
+    x[!is.na(x)]
+  }
+  else{
+    ux <- unique(x)
+    tab <- tabulate(match(x, ux))
+    ux[tab == max(tab)][1]
+  }
+}
+
+acc_test_x$Night <- as.factor(unlist(apply(acc_test_x[,c("Sunrise_Sunset", "Civil_Twilight", "Nautical_Twilight", "Astronomical_Twilight", "Night")], 1, stat_mode)))
+
+acc_test_x[,c(1, 2, 18)] <- apply(acc_test_x[, c(1, 2, 18)], 2, as.character)
+acc_test_x[,c(1, 2, 18)] <- apply(acc_test_x[, c(1, 2, 18)], 2, as.POSIXct, format="%Y-%m-%dT%H:%M:%SZ")
+
+#######################################################################################
+
+#Cleaning Wind_Direction
+
+x <- as.character(acc_test_x$Wind_Direction)
+x[x == "CALM"] <- "Calm"
+x[x=="East"] <- "E"
+x[x=="North"] <- "N"
+x[x=="South"] <- "S"
+x[x=="West"] <- "W"
+x[x=="Variable"] <- "VAR"
+acc_test_x$Wind_Direction <- as.factor(x)
+
+#######################################################################################
+
+#Create Highway Predictor
+#(Whether or not the accident occurred on a highway)
+
+acc_test_x$Highway <- grepl("Hwy", acc_test_x$Street, ignore.case=TRUE) | grepl("Highway", acc_test_x$Street, ignore.case=TRUE) |grepl("I-", acc_test_x$Street, ignore.case=TRUE)
+
+
+#######################################################################################
+
+#Create Time_Lapsed Predictor
+
+acc_test_x$Time_Lapsed <- acc_test_x$End_Time - acc_test_x$Start_Time
+
+
+#Create Distance_Traveled Predictor
+
+acc_test_x <- acc_test_x %>% mutate("Distance_Traveled" = sqrt((End_Lat - Start_Lat)^2 + (End_Lng - Start_Lng)^2))
+
+#######################################################################################
+
+#Simplify Zipcode
+
+acc_test_x$Zipcode <- as.factor(sapply(acc_test_x$Zipcode, substr, start=1, stop=5))
+
+#Organize zipcodes into 9 regional categories (Region_Code)
+
+region <- data.frame("Region_Code" = 0:9, "Region" = as.factor(c('New England', 'Mid-Atlantic', 'Central East Coast', 'South', 'Midwest', 'Northern Great Plains', 'Central Great Plains', 'South Central', 'Mountain Desert', 'West Coast')))
+
+acc_test_x <- acc_test_x %>% mutate("Region_Code" = as.factor(substr(Zipcode, 1, 1)))
+
+#acc_test_x <- merge(acc_test_x, region, all.x=T, all.y=F, by.x="Region_Code", by.y="Region_Code")
+
+acc_test_x$Region_Code <- as.factor(acc_test_x$Region_Code)
+
+#######################################################################################
+
+#Create isCalm and isClear Predictors
+#isCalm is a variable that indicates whether the Wind_Direction variable is "Calm". 
+#isClear is a variable that indicates whether the Weather_Condition variable is "Clear". 
+
+acc_test_x$isCalm <- acc_test_x$Wind_Direction == "CALM"
+acc_test_x$isCalm[is.na(acc_test_x$isCalm)] <- FALSE
+
+acc_test_x$isClear <- acc_test_x$Weather_Condition == "Clear"
+acc_test_x$isClear[is.na(acc_test_x$isClear)] <- FALSE
+
+#######################################################################################
+
+#Remove redundant variables
+#These variables are the variables the predictors we've just created are based on. 
+#These variable are County, Start_Time, End_Time, Start_Lat, End_Lat, Start_Lng, End_Lng, Description, Street, City, State, Zipcode, Country, Airport_Code, Wind_Direction, Weather_Condition, Sunrise_Sunset, Civil_Twilight, Nautical_Twilight, Astronomical_Twilight
+
+names(acc_test_x)
+#head(acc_test_x)
+
+test_simplified <- acc_test_x[, -c(1, 2, 3, 4, 5, 6, 8, 9, 11, 12, 13, 14, 15, 16, 17, 24, 26, 40, 41, 42, 43)]
+
+#Export files
+write.csv(acc_test_x, "all_test.csv", row.names=F)
+write.csv(test_simplified, "simplified_test.csv", row.names=F)
+
+#View new data frames
+str(test_simplified)
+```
+
+
+#### misc (stuff to be worked on later)
+
+```{r}
+#IGNORE FOR NOW
+######################################################################################
+#IGNORE FOR NOW
+#Merge County Population Data
+
+county <- read.csv("county.csv", header=T, stringsAsFactors = T)
+#head(county[county$STNAME == "California",], 20)
+
+county_data <- data.frame("County" = gsub(" County", "", county$CTYNAME, ignore.case=T))
+county_data$Population <- county$POPESTIMATE2020
+
+merged <- merge(acc_train, county_data, by.x="County", by.y="County", all.x=T, all.y=F)
+head(county_data)
+test <- left_join(acc_train, county_data, by="County")
+head(acc_train)
+head(test)
+
+#######################################################################################
+
+```
+
+```{r}
+#Merge Zipcode Population Data
+
+zipcode <- read.csv("zipcodes2.csv", header=T, stringsAsFactors=T)
+summary(zipcode)
+
+zipcode <- zipcode %>% select(population, zipcode)
+zipcode$zipcode <- as.factor(zipcode$zipcode)
+test <- merge(merged, zipcode, by.x="Zipcode", by.y="zipcode", all.x=T, all.y=F, no.dups=T)
+test <- inner_join(zipcode, merged, by=c("zipcode", "Zipcode"))
+dim(test)
+?merge
+names(merged)
+```
+
+
+```{r}
+merged[is.na(merged$Region),]
+```
+
+
+------------------------------------------------------------------------
+
+### Imputing Missing Values
+
+#### Understanding Structure of Missing Values of Training Data
+
+```{r}
+library(VIM)
+library(dplyr)
+
+#VIM::aggr() counts the number of missing values of each predictor and vizualises it
+NA_plot <- aggr(non_redundant, col=c("blue", "yellow"), only.miss=T, combined=T, numbers=T, sortVars=T, labels=names(non_redundant), cex.axis=0.5, ylab=c("Missing Data", "Pattern"))
+
+#Create a separate object for the table of missing values
+NA_df <- NA_plot$missings %>% filter(Count > 0) %>% arrange(desc(Count))
+predictor_classes <- data.frame("Variable"=names(non_redundant), "Type" = sapply(non_redundant, class))
+NA_df <- NA_df %>% inner_join(predictor_classes, by="Variable")
+NA_df
+
+#Separate numeric and categorical columns with missing values
+numeric_NAs <- NA_df %>% filter(Type == "numeric" | Type == "integer") %>% select(Variable) %>% unlist()
+categorical_NAs <- NA_df %>% filter(Type == "factor") %>% select(Variable) %>% unlist()
+```
+The NA_df dataframe shows the predictors with missing values arranged in descending order by missing value count. From this, we observe that the majority of missing values come from the weather-related predictors, followed by Region_Code. 
+
+#### Repeat for Testing Data
+
+```{r}
+#VIM::aggr() counts the number of missing values of each predictor and vizualises it
+NA_plot_test <- aggr(test_simplified, col=c("blue", "yellow"), only.miss=T, combined=T, numbers=T, sortVars=T, labels=names(test_simplified), cex.axis=0.5, ylab=c("Missing Data", "Pattern"))
+
+#Create a separate object for the table of missing values
+NA_df_test <- NA_plot_test$missings %>% filter(Count > 0) %>% arrange(desc(Count))
+predictor_classes_test <- data.frame("Variable"=names(test_simplified), "Type" = sapply(test_simplified, class))
+NA_df_test <- NA_df_test %>% inner_join(predictor_classes_test, by="Variable")
+NA_df_test
+
+#Separate numeric and categorical columns with missing values
+numeric_NAs_test <- NA_df_test %>% filter(Type == "numeric" | Type == "integer") %>% select(Variable) %>% unlist()
+categorical_NAs_test <- NA_df_test %>% filter(Type == "factor") %>% select(Variable) %>% unlist()
+```
+
+
+#### Hmisc Approach
+
+The Hmisc Approach includes 2 steps:
+
+1.  Imputing numeric missing values with the median and categorical missing values with the mode.
+
+2.  Imputing missing values with mean imputation using additive regression, bootstrapping, and predictive mean matching.
+
+Training Data:
+
+```{r}
+library(Hmisc)
+
+#First Approach:
+#Simple median imputation
+imputed_numerical <- as.data.frame(apply(non_redundant[, numeric_NAs], 2, impute, fun=median))
+imputed_categorical <- sapply(non_redundant[, categorical_NAs], impute, fun=mode)
+
+#Export Basic Imputed Dataset
+train_imputed <- non_redundant
+train_imputed[, numeric_NAs] <- imputed_numerical
+train_imputed[, categorical_NAs] <- imputed_categorical
+train_imputed$Year <- as.numeric(as.character(train_imputed$Year))
+
+#Second Approach:
+#Additive regression, bootstrapping, and predictive mean matching
+train_areg <- non_redundant
+train_areg <- aregImpute(Severity~I(Weather_Timestamp)+I(Temperature.F.)
+                         +I(Wind_Chill.F.)+I(Humidity...)+I(Pressure.in.)+
+                           I(Visibility.mi.)+I(Wind_Speed.mph.)+Region_Code, data=non_redundant, x=T)
+areg_imputed <- non_redundant
+areg_imputed[, unlist(NA_df$Variable)] <- as.data.frame(train_areg$x)[, -1]
+areg_imputed$Year <- as.numeric(as.character(areg_imputed$Year))
+write.csv(areg_imputed, "areg_imputed_train.csv", row.names=F)
+```
+
+Testing Data:
+
+```{r}
+#First Approach:
+#Simple median imputation
+imputed_numeric_test <- as.data.frame(apply(test_simplified[, numeric_NAs], 2, impute, fun=median))
+imputed_categorical_test <- sapply(test_simplified[, categorical_NAs], impute, fun=mode)
+
+#Export Basic Imputed Dataset
+test_imputed <- test_simplified
+test_imputed[, numeric_NAs] <- imputed_numeric_test
+test_imputed[, categorical_NAs] <- imputed_categorical_test
+test_imputed$Year <- as.numeric(as.character(test_imputed$Year))
+
+#Second Approach:
+##Additive regression, bootstrapping, and predictive mean matching
+#test_areg <- test_simplified
+#test_areg$Year <- as.numeric(as.character(test_areg$Year))
+#test_areg <- aregImpute(Severity~I(Weather_Timestamp)+I(Temperature.F.)
+#                         +I(Wind_Chill.F.)+I(Humidity...)+I(Pressure.in.)+
+#                           I(Visibility.mi.)+I(Wind_Speed.mph.)+Region_Code, data=test_simplified, x=T)
+#areg_imputed_test <- test_simplified
+#areg_imputed_test[, unlist(NA_df$Variable)] <- as.data.frame(test_areg$x)[, -1]
+#write.csv(areg_imputed_test, "areg_imputed_test.csv", row.names=F)
+```
+
+
+#### missForest Approach
+
+#### MICE Approach
+
+#### kNN Approach
+
+### Classification Models
+
+#### randomForest
+
+```{r randomForest, basic imputation}
+library(randomForest)
+
+tree_num <- c(seq(0.1, 0.9, 0.5), 1:50)
+
+k <- 1
+rf_error = c()
+
+for (i in tree_num){
+  model_rf_1 <- randomForest(Severity~., train_imputed, ntree=i*10)
+  pred <- predict(model_rf_1, train_imputed)
+  rf_error[k] <- mean(pred != train_imputed$Severity)
+  k <- k+1
+}
+
+which.min(rf_error)
+#25 trees is optimal
+
+model_rf <- randomForest(Severity~., train_imputed, mtry=sqrt(33), importance=T, ntree=1000)
+
+varImpPlot(model_rf)
+
+partialPlot(model_rf, train_imputed, Closure)
+
+MDSplot(model_rf)
+
+plot(model_rf)
+
+rf_out <- predict(model_rf, test_imputed)
+
+rf_final <- data.frame("Ob" = 1:15000, "SEVERITY" = rf_out)
+
+write.csv(rf_final, "rf_submission.csv", row.names=F)
+```
+
+```{r}
+str(train_imputed)
+str(test_imputed)
+```
+
+
+```{r randomForest, areg imputation}
+library(randomForest)
+
+model_rf_areg <- randomForest(Severity~., areg_imputed)
+
+rf_out_areg <- predict(model_rf_areg, test_imputed)
+
+rf_final_areg <- data.frame("Ob" = 1:15000, "SEVERITY" = rf_out_areg)
+
+write.csv(rf_final, "rf_submission.csv", row.names=F)
+```
+
+```{r}
+str(areg_imputed)
+str(test_imputed)
+```
+
+
+#### XGBoost
+
+```{r}
+library(xgboost)
+library(caret)
+
+model_xgboost <- train(Severity~., train_imputed, method="xgbTree", trControl=trainControl("cv", 10))
+
+xgboost_out <- predict(model_xgboost, test_imputed)
+
+xgboost_final <- data.frame("Ob" = 1:15000, "SEVERITY" = xgboost_out)
+
+write.csv(xgboost_final, "xgboost_submission.csv", row.names=F)
+```
+
+#### kNN
+
+```{r}
+library(class)
+library(stats)
+
+#Prep Data
+Y_train <- train_imputed$Severity
+X_train <- train_imputed[, -1]
+indx <- sapply(X_train, is.factor)
+X_train[indx] <- lapply(X_train[indx], as.numeric)
+X_train <- as.matrix(X_train)
+#dim(X_train)
+
+X_test <- test_imputed
+indx <- sapply(X_test, is.factor)
+X_test[indx] <- lapply(X_test[indx], as.numeric)
+X_test <- as.matrix(X_test)
+#dim(X_test)
+
+#Create kNN Models
+model_knn10 <- knn(X_train, X_test, Y_train, k=10)
+model_knn25 <- knn(X_train, X_test, Y_train, k=25)
+model_knn50 <- knn(X_train, X_test, Y_train, k=50)
+
+#Write Files
+knn10_final <- data.frame("Ob"=1:15000, "SEVERITY" = model_knn10)
+knn25_final <- data.frame("Ob"=1:15000, "SEVERITY" = model_knn25)
+knn50_final <- data.frame("Ob"=1:15000, "SEVERITY" = model_knn50)
+
+write.csv(knn10_final, "knn10_submission.csv", row.names=F)
+write.csv(knn25_final, "knn25_submission.csv", row.names=F)
+write.csv(knn50_final, "knn50_submission.csv", row.names=F)
+
+```
+
+
+
+
